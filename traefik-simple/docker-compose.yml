@@ -1,0 +1,88 @@
+version: '3'
+
+services:
+  error-pages:
+    image: tarampampam/error-pages:latest # Using the latest tag is highly discouraged. Please, use tags in X.Y.Z format
+    environment:
+      TEMPLATE_NAME: connection # set the error pages template
+    labels:
+      traefik.enable: true
+      # use as "fallback" for any NON-registered services (with priority below normal)
+      traefik.http.routers.error-pages-router.rule: HostRegexp(`{host:.+}`)
+      traefik.http.routers.error-pages-router.priority: 10
+      # should say that all of your services work on https
+      traefik.http.routers.error-pages-router.entrypoints: web
+      traefik.http.routers.error-pages-router.middlewares: error-pages-middleware
+      # "errors" middleware settings
+      traefik.http.middlewares.error-pages-middleware.errors.status: 400-599
+      traefik.http.middlewares.error-pages-middleware.errors.service: error-pages-service
+      traefik.http.middlewares.error-pages-middleware.errors.query: /{status}.html
+      # define service properties
+      traefik.http.services.error-pages-service.loadbalancer.server.port: 8080
+    depends_on:
+      - reverse-proxy
+
+  reverse-proxy:
+    # The official v2 Traefik docker image
+    image: traefik:v2.9
+    # Enables the web UI and tells Traefik to listen to docker
+    command:
+      - --api.insecure=true
+      - --providers.docker
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entryPoints.streaming.address=:5432/tcp
+      - --accesslog=true
+    ports:
+      # The HTTP port
+      - "80:80"
+      # The Web UI (enabled by --api.insecure=true)
+      - "8080:8080"
+    volumes:
+      # So that Traefik can listen to the Docker events
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  landingpage:
+    image: dorianim/landingpage
+    ports:
+      - "5080:80"
+    volumes:
+      - landingpage-data:/data
+    labels:
+      traefik.enable: true
+      traefik.http.routers.landingpage.entrypoints: web
+      traefik.http.routers.landingpage.rule: PathPrefix(`/`)
+
+  whoami:
+    image: traefik/whoami
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whoami.entrypoints=web"
+      - "traefik.http.routers.whoami.rule=PathPrefix(`/whoami`)"
+
+  grafana:
+    image: grafana/grafana-oss
+    environment:
+      - GF_SERVER_DOMAIN=localhost
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/grafana/
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    labels:
+      traefik.enable: true
+      traefik.http.routers.grafana.entrypoints: web
+      traefik.http.routers.grafana.rule: Path(`/grafana`) || PathPrefix(`/grafana/`)
+      # traefik.http.routers.grafana.rule: Host(`example.com`) && PathPrefix(`/grafana`)
+      traefik.http.services.grafana.loadbalancer.server.port: 3000
+  
+  influx:
+    image: influxdb:1.8
+    labels:
+      traefik.enable: true
+      traefik.http.routers.influx.entrypoints: web
+      traefik.http.routers.influx.rule: Path(`/influx`) || PathPrefix(`/influx/`)
+      traefik.http.services.influx.loadbalancer.server.port: 8086
+
+volumes:
+  grafana-storage:
+  landingpage-data:
